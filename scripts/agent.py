@@ -87,6 +87,15 @@ class DFIRAgent:
             if ev_file.suffix in ('.img', '.E01', '.raw'):
                 self._run_plaso(ev_file)
         
+        # Phase 2c: Volatility3 memory analysis (if memory dumps found)
+        memory_files = [f for f in evidence_files if f.suffix in ('.vmem', '.dmp', '.lime', '.raw')]
+        if memory_files:
+            for mem_file in memory_files:
+                self._run_volatility(mem_file)
+        else:
+            print("  [VOLATILITY] No memory dumps found — skipping (disk-only mode)")
+            self.logger.log_decision("volatility", "No memory dumps in evidence directory", "skip memory analysis, disk-only mode")
+        
         # Phase 3: Cross-tool corroboration
         print(f"\n[AGENT] Running cross-tool corroboration...")
         contradictions = self.corrector.check_cross_tool_corroboration(self.findings)
@@ -315,6 +324,84 @@ class DFIRAgent:
                         corroboration=["sleuthkit:./exports/fls_body.txt"],
                     )
                     break  # One finding per event
+    
+    def _run_volatility(self, mem_path: Path):
+        """Run Volatility3 memory analysis on memory dump."""
+        print(f"  [VOLATILITY] Running memory analysis on {mem_path.name}...")
+        vol_dir = self.exports_dir / "volatility"
+        vol_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Key plugins for DFIR
+        critical_plugins = [
+            ("windows.pstree", "Process tree (parent-child relationships)"),
+            ("windows.psscan", "Pool-tag scanned processes (includes hidden/unlinked)"),
+            ("windows.cmdline", "Process command lines"),
+            ("windows.netstat", "Network connections"),
+            ("windows.malfind", "Injected memory (possible malware)"),
+            ("windows.dlllist", "Loaded DLLs per process"),
+            ("linux.pslist", "Linux process list"),
+            ("linux.bash", "Bash command history"),
+            ("linux.check_syscall", "System call hook detection"),
+        ]
+        
+        for plugin, description in critical_plugins:
+            output_file = vol_dir / f"{plugin.replace('.', '_')}.txt"
+            start = time.time()
+            result = subprocess.run(
+                ["vol", "-q", "-f", str(mem_path), "-r", "quick", plugin],
+                capture_output=True, text=True, timeout=120
+            )
+            duration = int((time.time() - start) * 1000)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                output_file.write_text(result.stdout)
+                self.logger.log_tool_execution(
+                    f"volatility-{plugin}", f"vol -f {mem_path} {plugin}",
+                    str(output_file), result.returncode, 1200, duration
+                )
+                self._analyze_volatility_output(output_file, plugin, description)
+            # Silently skip plugins that don't apply (wrong OS, etc.)
+    
+    def _analyze_volatility_output(self, output_file: Path, plugin: str, description: str):
+        """Analyze Volatility output for suspicious indicators."""
+        content = output_file.read_text()
+        if not content.strip():
+            return
+        
+        suspicious_indicators = [
+            # Process-level
+            ('cmd.exe', 'Suspicious Command Shell', 'high'),
+            ('powershell', 'PowerShell Execution', 'high'),
+            ('nc.exe', 'Netcat Execution', 'critical'),
+            ('ncat', 'Ncat Execution', 'critical'),
+            ('reverse', 'Reverse Shell Indicator', 'critical'),
+            ('/bin/sh', 'Shell Spawn', 'high'),
+            ('/bin/bash', 'Bash Spawn', 'medium'),
+            # Network-level
+            ('ESTABLISHED', 'Active Network Connection', 'medium'),
+            ('LISTENING', 'Listening Port', 'medium'),
+            ('4444', 'Known Reverse Shell Port', 'critical'),
+            ('4443', 'Suspicious Port', 'high'),
+            # Memory injection
+            ('malfind', 'Memory Injection Detected', 'critical'),
+            ('VAD', 'Virtual Address Descriptor', 'medium'),
+        ]
+        
+        for keyword, title, severity in suspicious_indicators:
+            if keyword.lower() in content.lower():
+                # Extract context line
+                for line in content.split('\n'):
+                    if keyword.lower() in line.lower():
+                        self.logger.log_finding(
+                            title=f"Volatility: {title}",
+                            description=f"[{plugin}] {description}: {line.strip()[:200]}",
+                            severity=severity,
+                            evidence_tool="volatility",
+                            evidence_output=str(output_file),
+                            confidence=0.88,
+                            corroboration=["sleuthkit:./exports/fls_body.txt", "yara:./exports/yara_results.txt"],
+                        )
+                        break  # One finding per keyword per plugin
     
     def _analyze_yara_output(self, yara_file: Path):
         """Parse YARA output into findings."""
