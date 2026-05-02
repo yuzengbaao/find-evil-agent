@@ -17,6 +17,8 @@ DFIR analysts face thousands of artifacts across disk images, memory dumps, and 
 
 ## Our Solution
 
+> 📐 **[Architecture Diagram](docs/architecture-diagram.png)** — Full pipeline with security boundary classification.
+
 A **structurally self-correcting DFIR agent** built on OpenClaw that:
 
 - **Orchestrates 4 DFIR tools** automatically: SleuthKit (filesystem), YARA (signatures), Plaso (timeline), Volatility3 (memory)
@@ -67,6 +69,8 @@ A **structurally self-correcting DFIR agent** built on OpenClaw that:
 | Corroboration Rate | 44% | 13% |
 
 ## Architecture
+
+![Architecture diagram](docs/architecture-diagram.svg)
 
 ```
 ┌─────────────────────────────────────────────────┐
