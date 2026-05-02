@@ -82,6 +82,11 @@ class DFIRAgent:
             # Unmount
             self._unmount_evidence()
         
+        # Phase 2b: Plaso timeline analysis (runs on raw image, no mount needed)
+        for ev_file in evidence_files:
+            if ev_file.suffix in ('.img', '.E01', '.raw'):
+                self._run_plaso(ev_file)
+        
         # Phase 3: Cross-tool corroboration
         print(f"\n[AGENT] Running cross-tool corroboration...")
         contradictions = self.corrector.check_cross_tool_corroboration(self.findings)
@@ -227,6 +232,89 @@ class DFIRAgent:
         
         # Parse YARA results
         self._analyze_yara_output(output)
+    
+    def _run_plaso(self, image_path: Path):
+        """Run Plaso timeline analysis on disk image."""
+        print("  [PLASO] Running timeline analysis...")
+        plaso_dir = self.exports_dir / "plaso"
+        plaso_dir.mkdir(parents=True, exist_ok=True)
+        
+        plaso_file = plaso_dir / "timeline.plaso"
+        
+        # Step 1: Create timeline
+        start = time.time()
+        result = subprocess.run(
+            ["log2timeline.py", "--status_view", "none", "--parsers", "linux",
+             str(plaso_file), str(image_path)],
+            capture_output=True, text=True, timeout=300
+        )
+        duration = int((time.time() - start) * 1000)
+        
+        if result.returncode != 0 or not plaso_file.exists():
+            print(f"  [PLASO] Failed: {result.stderr[:200]}")
+            return
+        
+        self.logger.log_tool_execution("plaso-log2timeline", f"log2timeline.py {image_path}", str(plaso_file), result.returncode, 1500, duration)
+        
+        # Step 2: Export events to JSONL
+        events_file = plaso_dir / "events.jsonl"
+        result2 = subprocess.run(
+            ["psort.py", "-o", "json_line", "-w", str(events_file), str(plaso_file)],
+            capture_output=True, text=True, timeout=120
+        )
+        
+        if events_file.exists():
+            self.logger.log_tool_execution("plaso-psort", f"psort.py -o json_line {plaso_file}", str(events_file), result2.returncode, 1000, 800)
+            self._analyze_plaso_events(events_file)
+        
+        # Step 3: Also export CSV timeline
+        csv_file = plaso_dir / "timeline.csv"
+        subprocess.run(
+            ["psort.py", "-o", "dynamic", "-w", str(csv_file), str(plaso_file)],
+            capture_output=True, text=True, timeout=120
+        )
+    
+    def _analyze_plaso_events(self, events_file: Path):
+        """Analyze Plaso events for suspicious indicators."""
+        suspicious_keywords = [
+            ('suspicious process', 'System Log Anomaly', 'medium'),
+            ('reverse', 'Reverse Shell Activity in Logs', 'high'),
+            ('Accepted password', 'Remote Authentication', 'medium'),
+            ('session opened', 'User Session', 'low'),
+            ('backdoor', 'Backdoor Reference in Logs', 'high'),
+            ('credential', 'Credential Activity in Logs', 'medium'),
+            ('exploit', 'Exploit Reference in Logs', 'high'),
+        ]
+        
+        content = events_file.read_text()
+        for line in content.strip().split('\n'):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            
+            message = event.get('message', '')
+            data_type = event.get('data_type', '')
+            timestamp = event.get('datetime', '')
+            
+            for keyword, title, severity in suspicious_keywords:
+                if keyword.lower() in message.lower():
+                    # Avoid duplicate titles
+                    if any(f['title'] == f"Plaso: {title}" for f in self.findings):
+                        continue
+                    
+                    self.logger.log_finding(
+                        title=f"Plaso: {title}",
+                        description=f"[{data_type}] {timestamp}: {message.strip()}",
+                        severity=severity,
+                        evidence_tool="plaso",
+                        evidence_output=str(events_file),
+                        confidence=0.85,
+                        corroboration=["sleuthkit:./exports/fls_body.txt"],
+                    )
+                    break  # One finding per event
     
     def _analyze_yara_output(self, yara_file: Path):
         """Parse YARA output into findings."""
