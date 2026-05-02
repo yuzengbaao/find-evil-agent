@@ -191,6 +191,13 @@ class DFIRAgent:
             (r'\.shadow', 'Potential credential dump'),
             (r'evil', 'Suspicious naming'),
             (r'temp.*\.', 'Suspicious temp file'),
+            (r'\.locked', 'Ransomware-encrypted file'),
+            (r'DECRYPT', 'Ransom note detected'),
+            (r'ransom', 'Ransomware artifact'),
+            (r'beacon', 'C2 beacon artifact'),
+            (r'exfil', 'Exfiltration artifact'),
+            (r'staging', 'Data staging directory'),
+            (r'crontab', 'Persistence mechanism'),
         ]
         
         content = fls_file.read_text()
@@ -220,9 +227,21 @@ class DFIRAgent:
     def _run_yara_scan(self, image_path: Path):
         """Run YARA scan on mounted evidence or raw image."""
         scan_target = str(self.mount_point) if self.mount_point else str(image_path)
-        rules_file = self.config.get("yara_rules", "/tmp/malware_rules.yar")
+        # Look for YARA rules: case evidence dir first, then config, then global
+        candidates = [
+            str(self.evidence_dir / "ransomware_rules.yar"),
+            str(self.evidence_dir / "malware_rules.yar"),
+            str(self.case_dir / "malware_rules.yar"),
+            self.config.get("yara_rules"),
+            "/tmp/malware_rules.yar",
+        ]
+        rules_file = None
+        for c in candidates:
+            if c and Path(c).exists():
+                rules_file = c
+                break
         
-        if not Path(rules_file).exists():
+        if not rules_file:
             print("  [YARA] No rules file found, skipping")
             return
         
@@ -293,6 +312,10 @@ class DFIRAgent:
             ('backdoor', 'Backdoor Reference in Logs', 'high'),
             ('credential', 'Credential Activity in Logs', 'medium'),
             ('exploit', 'Exploit Reference in Logs', 'high'),
+            ('Failed password', 'Brute Force Attempt', 'high'),
+            ('outbound transfer', 'Data Exfiltration in Logs', 'high'),
+            ('CRON', 'Scheduled Task Execution', 'medium'),
+            ('ENCRYPTED', 'Ransomware Activity in Logs', 'critical'),
         ]
         
         content = events_file.read_text()
