@@ -43,6 +43,8 @@ We extended OpenClaw (the agent framework) to create a domain-specific DFIR orch
 
 **Key design decision**: Constraints are architectural, not prompt-based. We don't tell the agent "please don't modify evidence" — we mount the filesystem read-only at the OS level. We don't ask it to "be careful with duplicates" — we deduplicate by artifact path in code.
 
+**Evidence integrity**: We validated that the analysis path is spoliation-resistant. The audit trail records the read-only mount decision first, every tool writes only to derived-output directories, and every output file is SHA256-hashed. That means each finding can be traced back to a specific hashed artifact, and any post-run tampering would be detectable in the audit chain.
+
 ## Challenges we ran into
 
 1. **Finding public forensic test data**: Most DFIR datasets are restricted. We created synthetic disk images with planted artifacts to have verifiable ground truth for testing.

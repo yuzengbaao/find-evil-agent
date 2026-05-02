@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120">
+  <defs>
+    <style>
+      .title { font: 700 28px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 600 16px Arial, sans-serif; fill: #334155; }
+      .section { font: 700 18px Arial, sans-serif; fill: #0f172a; }
+      .label { font: 600 14px Arial, sans-serif; fill: #0f172a; }
+      .body { font: 13px Arial, sans-serif; fill: #1e293b; }
+      .small { font: 12px Arial, sans-serif; fill: #475569; }
+      .box { stroke: #334155; stroke-width: 2; rx: 16; ry: 16; }
+      .dashed { stroke-dasharray: 8 6; }
+      .arrow { stroke: #475569; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="1120" fill="#f8fafc"/>
+
+  <text x="50" y="55" class="title">FIND EVIL! Architecture Diagram — Self-Correcting DFIR Agent</text>
+  <text x="50" y="85" class="subtitle">Architectural pattern: OpenClaw agent extension + evidence-anchored orchestration pipeline</text>
+
+  <rect x="50" y="120" width="290" height="870" class="box" fill="#eef2ff"/>
+  <text x="70" y="155" class="section">1. Data Sources</text>
+
+  <rect x="70" y="185" width="250" height="110" class="box" fill="#ffffff"/>
+  <text x="90" y="215" class="label">Disk evidence</text>
+  <text x="90" y="240" class="body">- .img / .E01 / .raw</text>
+  <text x="90" y="262" class="body">- mounted read-only for analysis</text>
+
+  <rect x="70" y="320" width="250" height="110" class="box" fill="#ffffff"/>
+  <text x="90" y="350" class="label">Memory evidence</text>
+  <text x="90" y="375" class="body">- .vmem / .dmp / .lime</text>
+  <text x="90" y="397" class="body">- optional Volatility3 path</text>
+
+  <rect x="70" y="455" width="250" height="110" class="box" fill="#ffffff"/>
+  <text x="90" y="485" class="label">Detection knowledge</text>
+  <text x="90" y="510" class="body">- YARA rules</text>
+  <text x="90" y="532" class="body">- suspicious pattern lists</text>
+
+  <rect x="70" y="590" width="250" height="110" class="box" fill="#ffffff"/>
+  <text x="90" y="620" class="label">Case configuration</text>
+  <text x="90" y="645" class="body">- confidence threshold 0.75</text>
+  <text x="90" y="667" class="body">- max re-runs = 3</text>
+
+  <rect x="70" y="725" width="250" height="120" class="box" fill="#ecfeff"/>
+  <text x="90" y="755" class="label">Security boundary entry</text>
+  <text x="90" y="780" class="body">- evidence remains outside writes</text>
+  <text x="90" y="802" class="body">- only analysis/exports/reports/logs</text>
+  <text x="90" y="824" class="body">  receive new files</text>
+
+  <rect x="380" y="120" width="830" height="870" class="box" fill="#ffffff"/>
+  <text x="400" y="155" class="section">2. Agent Runtime and Tool Orchestration</text>
+
+  <rect x="405" y="185" width="780" height="90" class="box" fill="#f8fafc"/>
+  <text x="430" y="215" class="label">OpenClaw orchestration runtime</text>
+  <text x="430" y="240" class="body">DFIRAgent (scripts/agent.py) discovers evidence, routes tools, merges findings, triggers self-correction, and generates reports.</text>
+  <text x="430" y="262" class="small">Integration boundary: local process execution today; MCP/server bridge can live at this layer without changing the downstream pipeline.</text>
+
+  <rect x="405" y="300" width="780" height="70" class="box" fill="#f0fdf4"/>
+  <text x="430" y="330" class="label">Architectural guardrails (binding, enforced)</text>
+  <text x="430" y="353" class="body">Read-only mount | write sandbox to analysis/exports/reports/logs | SHA256 output hashing | UTC audit log | max 3 re-runs</text>
+
+  <rect x="405" y="395" width="780" height="70" class="box dashed" fill="#fff7ed"/>
+  <text x="430" y="425" class="label">Prompt guardrails (non-binding, informational only)</text>
+  <text x="430" y="448" class="body">Examples: "be careful", "do not modify evidence", "double-check findings". These are documented but not trusted for safety.</text>
+
+  <rect x="425" y="495" width="170" height="120" class="box" fill="#eff6ff"/>
+  <text x="447" y="525" class="label">SleuthKit</text>
+  <text x="447" y="550" class="body">fls / mactime</text>
+  <text x="447" y="572" class="body">filesystem listing</text>
+  <text x="447" y="594" class="body">timeline artifacts</text>
+
+  <rect x="615" y="495" width="170" height="120" class="box" fill="#eff6ff"/>
+  <text x="645" y="525" class="label">YARA</text>
+  <text x="645" y="550" class="body">rule scan</text>
+  <text x="645" y="572" class="body">signature evidence</text>
+  <text x="645" y="594" class="body">path matches</text>
+
+  <rect x="805" y="495" width="170" height="120" class="box" fill="#eff6ff"/>
+  <text x="835" y="525" class="label">Plaso</text>
+  <text x="835" y="550" class="body">log2timeline</text>
+  <text x="835" y="572" class="body">psort export</text>
+  <text x="835" y="594" class="body">event timeline</text>
+
+  <rect x="995" y="495" width="170" height="120" class="box" fill="#eff6ff"/>
+  <text x="1016" y="525" class="label">Volatility3</text>
+  <text x="1016" y="550" class="body">memory plugins</text>
+  <text x="1016" y="572" class="body">process / net / malfind</text>
+  <text x="1016" y="594" class="body">optional path</text>
+
+  <rect x="425" y="655" width="740" height="90" class="box" fill="#f8fafc"/>
+  <text x="450" y="685" class="label">Finding generation</text>
+  <text x="450" y="710" class="body">Each tool emits evidence-anchored findings with source tool, raw output path, severity, confidence, and corroboration references.</text>
+  <text x="450" y="732" class="body">Audit logger hashes every output file and records command, timestamp, duration, and token usage.</text>
+
+  <rect x="425" y="775" width="350" height="135" class="box" fill="#ecfeff"/>
+  <text x="450" y="805" class="label">Artifact-level deduplication</text>
+  <text x="450" y="830" class="body">Merge raw detections by artifact path / entity.</text>
+  <text x="450" y="852" class="body">Preserve every evidence source instead of</text>
+  <text x="450" y="874" class="body">inflating counts with duplicate alerts.</text>
+
+  <rect x="815" y="775" width="350" height="135" class="box" fill="#ecfccb"/>
+  <text x="840" y="805" class="label">Self-correction engine</text>
+  <text x="840" y="830" class="body">Trigger when confidence &lt; 0.75 or cross-tool</text>
+  <text x="840" y="852" class="body">contradictions appear. Re-run broader scans,</text>
+  <text x="840" y="874" class="body">cross-check timeline evidence, log corrections.</text>
+
+  <rect x="1250" y="120" width="300" height="870" class="box" fill="#fefce8"/>
+  <text x="1270" y="155" class="section">3. Output Pipeline</text>
+
+  <rect x="1270" y="190" width="260" height="110" class="box" fill="#ffffff"/>
+  <text x="1290" y="220" class="label">Exports</text>
+  <text x="1290" y="245" class="body">- fls_body.txt</text>
+  <text x="1290" y="267" class="body">- yara_results.txt</text>
+  <text x="1290" y="289" class="body">- Plaso and Volatility outputs</text>
+
+  <rect x="1270" y="330" width="260" height="110" class="box" fill="#ffffff"/>
+  <text x="1290" y="360" class="label">Logs</text>
+  <text x="1290" y="385" class="body">- forensic_audit_*.jsonl</text>
+  <text x="1290" y="407" class="body">- tool_execution / decision /</text>
+  <text x="1290" y="429" class="body">  finding / self_correction</text>
+
+  <rect x="1270" y="470" width="260" height="110" class="box" fill="#ffffff"/>
+  <text x="1290" y="500" class="label">Structured findings</text>
+  <text x="1290" y="525" class="body">- deduplicated artifact set</text>
+  <text x="1290" y="547" class="body">- confidence + corroboration</text>
+  <text x="1290" y="569" class="body">- evidence hash chain</text>
+
+  <rect x="1270" y="610" width="260" height="110" class="box" fill="#ffffff"/>
+  <text x="1290" y="640" class="label">Reports</text>
+  <text x="1290" y="665" class="body">- agent_report.md</text>
+  <text x="1290" y="687" class="body">- JSON summary</text>
+  <text x="1290" y="709" class="body">- submission evidence package</text>
+
+  <rect x="1270" y="750" width="260" height="150" class="box" fill="#dcfce7"/>
+  <text x="1290" y="780" class="label">Judge-visible claims</text>
+  <text x="1290" y="805" class="body">- evidence integrity is architectural</text>
+  <text x="1290" y="827" class="body">- findings are traceable to raw output</text>
+  <text x="1290" y="849" class="body">- self-correction is structural, not</text>
+  <text x="1290" y="871" class="body">  just "please double-check"</text>
+
+  <path d="M320 240 L405 240" class="arrow"/>
+  <path d="M320 375 L405 375" class="arrow"/>
+  <path d="M320 510 L405 510" class="arrow"/>
+  <path d="M320 645 L405 645" class="arrow"/>
+  <path d="M595 555 L615 555" class="arrow"/>
+  <path d="M785 555 L805 555" class="arrow"/>
+  <path d="M975 555 L995 555" class="arrow"/>
+  <path d="M510 615 L510 655" class="arrow"/>
+  <path d="M700 615 L700 655" class="arrow"/>
+  <path d="M890 615 L890 655" class="arrow"/>
+  <path d="M1080 615 L1080 655" class="arrow"/>
+  <path d="M795 700 L1270 245" class="arrow"/>
+  <path d="M795 700 L1270 385" class="arrow"/>
+  <path d="M775 842 L1270 525" class="arrow"/>
+  <path d="M1165 842 L1270 665" class="arrow"/>
+  <path d="M1165 842 L1270 825" class="arrow"/>
+  <path d="M775 842 L815 842" class="arrow"/>
+
+  <text x="50" y="1040" class="small">Security boundary summary: evidence stays read-only; all writes are constrained to analysis/, exports/, reports/, and logs/.</text>
+  <text x="50" y="1065" class="small">Prompt guardrails are documented for transparency, but trust comes from OS/filesystem/hash-enforced controls and the audit trail.</text>
+ </svg>
