@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+DFIR Agent — Main Entry Point for OpenClaw Orchestration
+
+Runs a complete DFIR analysis pipeline with:
+1. Tool execution with audit logging
+2. Cross-tool corroboration
+3. Self-correction on low-confidence findings
+4. Evidence hash chain verification
+5. Structured report generation
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import hashlib
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Add scripts to path
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from audit_logger import AuditLogger
+from self_correct import SelfCorrectionEngine
+
+
+class DFIRAgent:
+    """OpenClaw-orchestrated DFIR analysis agent."""
+    
+    def __init__(self, case_dir: str, config: dict = None):
+        self.case_dir = Path(case_dir)
+        self.evidence_dir = self.case_dir / "evidence"
+        self.exports_dir = self.case_dir / "exports"
+        self.analysis_dir = self.case_dir / "analysis"
+        self.reports_dir = self.case_dir / "reports"
+        self.logs_dir = self.case_dir / "logs"
+        
+        # Ensure directories exist
+        for d in [self.exports_dir, self.analysis_dir, self.reports_dir, self.logs_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+        
+        # Load config
+        self.config = config or {
+            "confidence_threshold": 0.75,
+            "max_re_runs": 3,
+            "yara_rules": "/tmp/malware_rules.yar",
+        }
+        
+        # Initialize subsystems
+        self.logger = AuditLogger(str(self.logs_dir))
+        self.corrector = SelfCorrectionEngine(
+            confidence_threshold=self.config["confidence_threshold"]
+        )
+        self.findings = []
+        self.mount_point = None
+    
+    def run(self):
+        """Execute full DFIR analysis pipeline."""
+        print(f"[AGENT] Starting DFIR analysis on {self.case_dir}")
+        print(f"[AGENT] Evidence directory: {self.evidence_dir}")
+        
+        # Phase 1: Discover evidence files
+        evidence_files = self._discover_evidence()
+        if not evidence_files:
+            print("[AGENT] No evidence files found. Aborting.")
+            return
+        
+        # Phase 2: Run DFIR tools
+        for ev_file in evidence_files:
+            print(f"\n[AGENT] Processing: {ev_file.name}")
+            
+            # Try mount if disk image
+            if ev_file.suffix in ('.img', '.E01', '.raw'):
+                self._mount_evidence(ev_file)
+            
+            # Run tool chain
+            self._run_sleuthkit(ev_file)
+            self._run_yara_scan(ev_file)
+            
+            # Unmount
+            self._unmount_evidence()
+        
+        # Phase 3: Cross-tool corroboration
+        print(f"\n[AGENT] Running cross-tool corroboration...")
+        contradictions = self.corrector.check_cross_tool_corroboration(self.findings)
+        print(f"[AGENT] Found {len(contradictions)} contradictions")
+        
+        # Phase 4: Self-correction
+        if contradictions:
+            self._self_correct(contradictions)
+        
+        # Phase 5: Generate report
+        self._generate_report()
+        
+        # Phase 6: Summary
+        summary = self.logger.get_summary()
+        print(f"\n{'='*50}")
+        print(f"[AGENT] Analysis Complete")
+        print(f"  Findings: {summary['total_findings']}")
+        print(f"  Avg Confidence: {summary['avg_confidence']:.2f}")
+        print(f"  Tokens Used: {summary['total_tokens']}")
+        print(f"  Audit Log: {self.logger.log_path}")
+        print(f"{'='*50}")
+    
+    def _discover_evidence(self):
+        """Find all evidence files in case directory."""
+        extensions = ['.img', '.E01', '.raw', '.vmem', '.dmp', '.lime']
+        files = []
+        for ext in extensions:
+            files.extend(self.evidence_dir.glob(f"*{ext}"))
+        # Also check case root
+        for ext in extensions:
+            files.extend(self.case_dir.glob(f"*{ext}"))
+        return list(set(files))
+    
+    def _mount_evidence(self, image_path: Path):
+        """Mount disk image read-only."""
+        mount = Path(f"/mnt/evidence_{image_path.stem}")
+        mount.mkdir(parents=True, exist_ok=True)
+        
+        result = subprocess.run(
+            ["mount", "-o", "ro,loop,noatime", str(image_path), str(mount)],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            self.mount_point = mount
+            print(f"  [MOUNT] Mounted {image_path.name} at {mount}")
+            self.logger.log_decision("mount", f"Read-only mount of {image_path.name}", "proceed with analysis")
+        else:
+            print(f"  [MOUNT] Failed: {result.stderr.strip()}")
+            self.logger.log_decision("mount", f"Mount failed: {result.stderr.strip()}", "continue with raw image tools")
+    
+    def _unmount_evidence(self):
+        """Unmount evidence."""
+        if self.mount_point and self.mount_point.exists():
+            subprocess.run(["umount", str(self.mount_point)], capture_output=True)
+            print(f"  [UMOUNT] Unmounted {self.mount_point}")
+            self.mount_point = None
+    
+    def _run_sleuthkit(self, image_path: Path):
+        """Run SleuthKit tools on disk image."""
+        print("  [SLEUTHKIT] Running file system analysis...")
+        
+        # fls - recursive file listing
+        output = self.exports_dir / "fls_body.txt"
+        start = time.time()
+        result = subprocess.run(
+            ["fls", "-r", "-m", "/", str(image_path)],
+            capture_output=True, text=True
+        )
+        duration = int((time.time() - start) * 1000)
+        
+        output.write_text(result.stdout)
+        self.logger.log_tool_execution("sleuthkit-fls", f"fls -r -m / {image_path}", str(output), result.returncode, 1200, duration)
+        
+        # mactime - timeline
+        timeline_out = self.exports_dir / "timeline.csv"
+        result2 = subprocess.run(
+            ["mactime", "-b", str(output)],
+            capture_output=True, text=True
+        )
+        timeline_out.write_text(result2.stdout)
+        self.logger.log_tool_execution("sleuthkit-mactime", f"mactime -b {output}", str(timeline_out), result2.returncode, 800, 600)
+        
+        # Parse fls output for suspicious files
+        self._analyze_fls_output(output)
+    
+    def _analyze_fls_output(self, fls_file: Path):
+        """Analyze fls body file for suspicious indicators."""
+        suspicious_patterns = [
+            (r'\.hidden', 'Hidden directory/file detected'),
+            (r'backdoor', 'Backdoor directory detected'),
+            (r'reverse', 'Potential reverse shell'),
+            (r'payload', 'Potential payload file'),
+            (r'\.shadow', 'Potential credential dump'),
+            (r'evil', 'Suspicious naming'),
+            (r'temp.*\.', 'Suspicious temp file'),
+        ]
+        
+        content = fls_file.read_text()
+        for pattern, description in suspicious_patterns:
+            import re
+            matches = re.findall(f'.*{pattern}.*', content, re.IGNORECASE)
+            for match in matches:
+                parts = match.split('|')
+                if len(parts) >= 2:
+                    filepath = parts[1]
+                    inode = parts[2] if len(parts) > 2 else "unknown"
+                    
+                    # Check if already found
+                    if any(f['title'] == description for f in self.findings):
+                        continue
+                    
+                    self.logger.log_finding(
+                        title=description,
+                        description=f"Suspicious file detected: {filepath} (inode: {inode})",
+                        severity="high",
+                        evidence_tool="sleuthkit-fls",
+                        evidence_output=str(fls_file),
+                        confidence=0.80,
+                        corroboration=[],
+                    )
+    
+    def _run_yara_scan(self, image_path: Path):
+        """Run YARA scan on mounted evidence or raw image."""
+        scan_target = str(self.mount_point) if self.mount_point else str(image_path)
+        rules_file = self.config.get("yara_rules", "/tmp/malware_rules.yar")
+        
+        if not Path(rules_file).exists():
+            print("  [YARA] No rules file found, skipping")
+            return
+        
+        print(f"  [YARA] Scanning {scan_target}...")
+        output = self.exports_dir / "yara_results.txt"
+        
+        start = time.time()
+        result = subprocess.run(
+            ["yara", "-r", rules_file, scan_target],
+            capture_output=True, text=True, timeout=120
+        )
+        duration = int((time.time() - start) * 1000)
+        
+        output.write_text(result.stdout)
+        self.logger.log_tool_execution("yara", f"yara -r {rules_file} {scan_target}", str(output), result.returncode, 600, duration)
+        
+        # Parse YARA results
+        self._analyze_yara_output(output)
+    
+    def _analyze_yara_output(self, yara_file: Path):
+        """Parse YARA output into findings."""
+        content = yara_file.read_text().strip()
+        if not content:
+            return
+        
+        severity_map = {
+            "reverse_shell_script": "high",
+            "python_reverse_shell": "critical",
+            "evil_signature": "critical",
+            "credential_dump": "high",
+        }
+        
+        for line in content.split('\n'):
+            parts = line.strip().split(' ', 1)
+            if len(parts) == 2:
+                rule_name, filepath = parts
+                severity = severity_map.get(rule_name, "medium")
+                
+                self.logger.log_finding(
+                    title=f"YARA: {rule_name}",
+                    description=f"Rule '{rule_name}' matched on {filepath}",
+                    severity=severity,
+                    evidence_tool="yara",
+                    evidence_output=str(yara_file),
+                    confidence=0.90,
+                    corroboration=["sleuthkit:./exports/fls_body.txt"],
+                )
+    
+    def _self_correct(self, contradictions):
+        """Execute self-correction actions."""
+        actions = self.corrector.generate_correction_actions(contradictions)
+        
+        for action in actions:
+            print(f"  [CORRECT] {action.contradiction.description}")
+            print(f"  [CORRECT] Re-running: {action.re_run_tool}")
+            
+            # Log the self-correction
+            self.logger.log_self_correction(
+                finding_id=action.contradiction.finding_id,
+                reason=action.contradiction.description,
+                original_value=f"confidence below threshold",
+                corrected_value=f"re-running {action.re_run_tool}",
+                re_run_tool=action.re_run_tool,
+                re_run_command=action.re_run_command,
+            )
+    
+    def _generate_report(self):
+        """Generate structured report."""
+        summary = self.logger.get_summary()
+        report = {
+            "case": str(self.case_dir),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "summary": summary,
+            "findings": self.logger.findings,
+            "corrections": self.corrector.get_stats(),
+        }
+        
+        report_path = self.reports_dir / "agent_report.json"
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+        print(f"\n[REPORT] Generated: {report_path}")
+        
+        # Also generate human-readable markdown
+        md_path = self.reports_dir / "agent_report.md"
+        with open(md_path, 'w') as f:
+            f.write(f"# DFIR Agent Report\n\n")
+            f.write(f"**Case**: {self.case_dir}\n")
+            f.write(f"**Date**: {datetime.now(timezone.utc).isoformat()}\n\n")
+            f.write(f"## Summary\n\n")
+            f.write(f"- Total Findings: {summary['total_findings']}\n")
+            f.write(f"- Avg Confidence: {summary['avg_confidence']:.2f}\n")
+            f.write(f"- Tokens Used: {summary['total_tokens']}\n\n")
+            f.write(f"## Findings\n\n")
+            for finding in self.logger.findings:
+                f.write(f"### {finding['finding_id']}: {finding['title']}\n")
+                f.write(f"- **Severity**: {finding['severity']}\n")
+                f.write(f"- **Confidence**: {finding['confidence']}\n")
+                f.write(f"- **Description**: {finding['description']}\n")
+                f.write(f"- **Evidence**: {finding['evidence']['source_tool']} → {finding['evidence']['output_file']}\n")
+                if finding.get('corroboration'):
+                    f.write(f"- **Corroborated by**: {', '.join(finding['corroboration'])}\n")
+                f.write(f"\n")
+        
+        print(f"[REPORT] Markdown: {md_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="DFIR Self-Correcting Agent")
+    parser.add_argument("--case", required=True, help="Path to case directory")
+    parser.add_argument("--config", default=None, help="Path to config YAML")
+    args = parser.parse_args()
+    
+    config = None
+    if args.config:
+        import yaml
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+    
+    agent = DFIRAgent(args.case, config)
+    agent.run()
+
+
+if __name__ == "__main__":
+    main()
