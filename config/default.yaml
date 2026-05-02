@@ -1,0 +1,93 @@
+# OpenClaw DFIR Agent Configuration
+# FIND EVIL! Hackathon - Self-Correcting Agent
+
+agent:
+  name: "DFIR Self-Correcting Agent"
+  role: "Principal DFIR Orchestrator"
+  evidence_mode: "strict_read_only"
+  
+  # Autonomous operation - no confirmations needed
+  autonomous: true
+  
+  # Self-correction settings
+  self_correction:
+    enabled: true
+    confidence_threshold: 0.75
+    max_re_runs: 3
+    re_run_strategies:
+      - broaden_yara_rules      # Add more YARA rules and rescan
+      - extract_and_rescan      # icat extract then scan raw
+      - cross_ref_timeline      # Check mactime for corroboration
+    
+  # Evidence integrity
+  evidence_integrity:
+    hash_algorithm: "sha256"
+    verify_on_read: true
+    write_sandbox:
+      allowed:
+        - "./analysis/*"
+        - "./exports/*"
+        - "./reports/*"
+        - "./logs/*"
+      denied:
+        - "/cases/*"
+        - "/mnt/*"
+        - "/media/*"
+        - "/evidence/*"
+    
+  # Audit trail
+  audit:
+    format: "jsonl"
+    log_decisions: true
+    log_tool_executions: true
+    log_self_corrections: true
+    include_token_usage: true
+    include_timestamps: true
+    include_output_hashes: true
+
+# Tool routing table
+tools:
+  filesystem:
+    - tool: "sleuthkit"
+      commands: ["fls", "icat", "mmls", "mactime", "fsstat", "blkls", "istat"]
+      skill_file: "~/.claude/skills/sleuthkit/SKILL.md"
+      
+  memory:
+    - tool: "volatility3"
+      commands: ["vol"]
+      plugins:
+        critical:
+          - "windows.pstree"
+          - "windows.psscan"
+          - "windows.cmdline"
+          - "windows.netstat"
+          - "windows.malfind"
+          - "windows.dlllist"
+      skill_file: "~/.claude/skills/memory-analysis/SKILL.md"
+      
+  timeline:
+    - tool: "plaso"
+      commands: ["log2timeline.py", "psort.py", "pinfo.py"]
+      skill_file: "~/.claude/skills/plaso-timeline/SKILL.md"
+      
+  hunting:
+    - tool: "yara"
+      commands: ["yara", "yarac"]
+      skill_file: "~/.claude/skills/yara-hunting/SKILL.md"
+      
+  artifacts:
+    - tool: "eztools"
+      commands: ["dotnet /opt/zimmermantools/*.dll"]
+      skill_file: "~/.claude/skills/windows-artifacts/SKILL.md"
+
+# Forensic constraints (never violate)
+constraints:
+  - "Never modify files in /cases/, /mnt/, /media/, or evidence/ directories"
+  - "Never guess or fabricate forensic artifacts"
+  - "All conclusions must be grounded in raw tool output"
+  - "Output only to ./analysis/, ./exports/, ./reports/"
+  - "Always use UTC timestamps"
+  - "Verify tool success after every run"
+  - "On failure: read stderr → hypothesize → correct → retry"
+  - "Maximum 3 re-run attempts per contradiction"
+  - "Log every self-correction with reason and resolution"
