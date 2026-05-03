@@ -1,0 +1,26 @@
+# Find Evil Agent - DFIR Automation
+# Core dependencies for autonomous forensic analysis
+
+# Framework
+openclaw>=0.9.0
+
+# Forensic Tools
+python-sleuthkit>=4.11.0
+yara-python>=4.1.0
+plaso>=20201007
+volatility3>=2.5.0
+
+# Data Processing
+pandas>=1.5.0
+numpy>=1.23.0
+
+# Reporting
+jinja2>=3.1.0
+markdown>=3.4.0
+
+# Hashing & Integrity
+hashlib
+
+# Environment
+dotenv>=0.20.0
+pyyaml>=6.0
